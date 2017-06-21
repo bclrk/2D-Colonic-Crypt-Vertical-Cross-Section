@@ -1,0 +1,176 @@
+;;-----------------------------line-width-of-80-----------------------------
+;; This source file houses all functions associated with defining the states and division rules
+;; of the cell
+
+;; ---------------------------------------- Public Functions ---------------------------------------
+
+;; Initialize global variables and creates a stem cell
+;; intended to be called by a main "setup" function
+to SetupCellInstructions
+  ; create initial stem cell
+  create-cells 1 [
+    set cell_mc stem-mc
+    set cell_ls lifespan
+    set cell_wm lifespan
+    set cell_state "immature"
+    set is_stem? true
+    set neighbor_cells n-values stem-mc [nobody]
+  ]
+end
+
+;; Performs all cell divisions necessary to iterate through a single timestep
+;; intended to be called by a main "go" function
+to GoCellInstructions
+  CellAge
+  CellDivide
+  TrimDeadLeaves
+end
+
+;; ---------------------------------------- Local Functions ---------------------------------------
+
+;; Increments all age values and updates cell states when applicable
+to CellAge
+  ask cells with [cell_state != "dead"] [
+    set age age + 1
+    if age >= cell_mc [ set cell_state "mature" ]           ; cells older than cell_mc are maturing
+    if age >= cell_wm [ set cell_state "wholly-mature" ]    ; cells older than the whole maturation time
+    if cell_mc <= 0 [ set cell_state "wholly-mature" ]      ; as a convention for cells without an mc value
+    if age >= cell_ls [ set cell_state "dead" ]             ; cells older than the lifespan are dead
+  ]
+  ; If immortal-stem-cell is true, then all stem cells remain permanently fertile (i.e. maturing)
+  if immortal-stem-cell? [
+    ask cells with [is_stem?] [
+      ifelse age >= cell_mc
+      [ set cell_state "mature" ]
+      [ set cell_state "immature" ]
+    ]
+  ]
+end
+
+;; iterates through all cells and checks if they are maturing. If maturing, either an old cell is revived
+;; or a new cell is hatched and all neighbor connections are updated
+to CellDivide
+  ask cells [
+    ; increment the split direction by one step
+    set split_direction (split_direction + (stem-mc / cell_mc)) mod stem-mc
+    
+    ; if the cell should divide, then initialize the reproduction
+    if (cell_state = "mature") and (age > cell_mc or not rabbit?) [
+      let split-space item split_direction neighbor_cells    ; cell (or nobody) in the split_direction of the cell
+      
+      ; if direction of division was an old dead cell, revive the cell instead of creating a new one
+      ; this prevents empty "holes" where old cells exist while also maintaining connectivity of the tree
+      ifelse split-space != nobody and [cell_state = "dead"] of split-space [
+        ask split-space [
+          ; call to helper function which redefines all value changes to make the dead cell into a brand new cell
+          ; while maintaining all neighbor connections
+          set-new-cell-values
+        ]
+      ][
+        let parent-direction (split_direction + (int stem-mc / 2)) mod stem-mc    ; direction of the parent which is
+                                                                                  ; exactly opposite of the
+                                                                                  ; split_direction
+        let new-child nobody    ; handle for the new child about to be hatched
+        
+        ; create brand new cell
+        hatch 1 [
+          set new-child self
+          ; call to helper function which redefines all value changes to make the dead cell into a brand new cell
+          set-new-cell-values
+          
+          ; new cell has no neighbors except for the parent, 
+          set neighbor_cells n-values stem-mc [nobody]
+          set neighbor_cells replace-item parent-direction neighbor_cells myself
+        ]
+        
+        let previous-child item split_direction neighbor_cells    ; cell that is currently occupying the location of
+                                                                  ; the current split
+        
+        ; if the previous-child in that directly exists, push away push away old child
+        if previous-child != nobody [
+          ; set the parent-direction neighbor of the previous-child to be the new-child
+          ask previous-child [
+            set neighbor_cells replace-item parent-direction neighbor_cells new-child
+          ]
+          ; set the split_direction neighbor of the new-child to be the previous-child
+          ask new-child [
+            set neighbor_cells replace-item ([split_direction] of myself) neighbor_cells previous-child
+          ]
+        ]
+        ; set the split_direction neighbor of the parent to be the new-child
+        set neighbor_cells replace-item split_direction neighbor_cells new-child
+      ]
+    ]
+  ]
+end
+
+;; Finds and trims all dead leaf cells. Loops until no more dead leaves can be found
+;; This is necessary to manage the number of agents and therefore optimize runtime
+to TrimDeadLeaves
+  ; keep looping through until there are no more cells to trim
+  loop [
+    let kill-set cells with [
+      cell_state = "dead" and
+      length (filter [s -> s != nobody] neighbor_cells) <= 1
+    ]
+      
+    ; if the kill-set is empty then subsequent iterations will also be empty, so stop to prevent infinite loop
+    if not any? kill-set [ stop ]
+    
+    ; kill all the cells in the kill-set
+    ask kill-set [ die ]
+  ]
+end
+
+;; Initialize values for a new cell of age zero
+;; Intended to be used twice as a helper function for CellDivide
+to set-new-cell-values
+  ; set all values of the split space as if it were a brand new, young cell
+  set cell_state "immature"
+  set age 0
+  set generation ([generation] of myself + 1)
+  set is_stem? false
+  set split_direction [split_direction] of myself
+         
+  ; new characteristic life-cycle values are the child-values of the parent cell
+  let characteristic-parameters (get-characteristic-parameters generation)
+  set cell_mc item 0 characteristic-parameters
+  set cell_wm item 1 characteristic-parameters
+  set cell_ls item 2 characteristic-parameters
+  
+;  ; redefine the branch_direction only if parent was a stem cell (and therefore itself has a branch_direction of -1)
+;  if [is_stem?] of myself [ set branch_direction split_direction ]
+  
+  ; EXPERIMENTAL: if the new cell_mc is a negative number, then shift the split_direction clockwise by 1
+  if (angle-shift and cell_mc mod 2 = 1) [ set split_direction (split_direction - 1) mod stem-mc ]
+end
+
+;; Defines maturation cycle, life span, and time until whole maturation values for the next generation of cells
+to-report get-characteristic-parameters [ cell-generation ]
+
+  ; create list of generational rules for stem-mc and stem-wm time according to sliders
+  let mc-list (list stem-mc gen1-mc gen2-mc gen3-mc gen4-mc gen5-mc gen6-mc gen7-mc gen8-mc gen9-mc gen10-mc)
+  let wm-list (list lifespan gen1-wm gen2-wm gen3-wm gen4-wm gen5-wm gen6-wm gen7-wm gen8-wm gen9-wm gen10-wm)
+  
+  let new-mc 0
+  let new-wm 0
+  let new-ls lifespan         ; all cells have the same lifespan under this model
+  
+  ; set the new mc and wm values based on the generation using the mc-list and wm-list
+  ; if generation exceeds the sliders, then set the values to be equal to that of the last available slider setting
+  ifelse (generation < length mc-list) [
+    set new-mc item cell-generation mc-list
+    set new-wm item cell-generation wm-list
+  ][
+    set new-mc item ((length mc-list) - 1) mc-list
+    set new-wm item ((length wm-list) - 1) wm-list
+  ]
+  
+  ; if no-whole-maturation? is on then set wm to be lifespan for all cells
+  if no-whole-maturation? [ set new-wm lifespan ]
+
+  ; Maturation cycle of zero or less is equivalent to infertile (conventionally defined to be -1)
+  if new-mc <= 0 [ set new-mc -1 ]
+  
+  report (list new-mc new-wm new-ls)
+end

@@ -1,0 +1,56 @@
+;;------------------------------------------------------------------------120---------------------------------------
+;; This source file houses all functions associated with tracking the model-defined position of the cell
+
+;; ------------------------------------------------ Public Functions -----------------------------------------------
+
+;; Positions all cells in order of breadth-first search order beginning with
+;; the stem cell
+to CellPosition
+  
+end
+
+;; ---------------------------------------- Local Functions ---------------------------------------
+
+;; Maps the cell position onto the bottom hemispherical portion of the crypt
+to map-to-hemisphere
+
+end
+
+;; Maps the cell position to the upper cylindrical part of the crypt
+to map-to-cylinder
+
+end
+
+; Calculate the average "Circumference" of the cell structure
+;   - This assumes the structure is "folded up" into a cylinder. So the Circumference is the average number of cells
+;      at each unit distance
+;   - circumerence is calculated at the "steady-state" section of the structure only
+to-report Circumference
+  ; determine the inner-radius to start counting Circumference at the last non-wholey mature cell
+  ; since no reproduction happens past this point, Circumference will not grow
+  let inner-radius [ distance cell 0 ] of max-one-of (cells with [ cell_state = "immature" or cell_state = "mature"]) [ distance cell 0 ]
+
+  ; determine the outer-radius to  be the outermost whole-mature cell
+  let outer-radius [ distance cell 0 ] of max-one-of (cells with [ cell_state = "wholly-mature"]) [ distance cell 0 ]
+
+  ; limit the outer-radius to max-pxcor
+  if outer-radius > max-pxcor [
+    set outer-radius max-pxcor
+  ]
+
+  ; reset the out-radius to half of the original distance from the inner-radius. This is to avoid the non-steady state
+  ; effects at the edges of branches when cells start dieing
+  set outer-radius round (inner-radius + 0.5 * (outer-radius - inner-radius))
+
+  ; count all the cells lying in the desired range
+  let cells-in-range count cells with [ distance cell 0 > inner-radius and distance cell 0 < outer-radius and
+    not hidden?]
+
+  ; if the outer-radius and inner-radius is the same, then report 0 to avoid division by zero
+  if outer-radius - inner-radius = 0 [
+    report 0
+  ]
+
+  ; otherwise report the average number of cells per unit radius
+  report (cells-in-range / (outer-radius - inner-radius))
+end
