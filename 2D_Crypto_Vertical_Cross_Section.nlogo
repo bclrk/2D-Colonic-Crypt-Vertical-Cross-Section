@@ -3,9 +3,14 @@
 
 __includes ["Cell-Instructions.nls" "Cell-Positions.nls"]
 
+globals [crypt_circumference]
+
 breed [cells cell]
 
 cells-own [
+
+  force_x
+  force_y
 
   cell_state            ; can be "immature", "mature", "wholly-mature", or "dead"
   age                   ; number of cycles since birth of cell
@@ -31,30 +36,278 @@ cells-own [
   visited?              ; multi-use flag that can be set/reset for the purposes of tree traversal
 ]
 
+breed [anchors anchor]
+undirected-link-breed [springs spring]
+undirected-link-breed [anchor-links anchor-link]
+springs-own [affinity]
+anchors-own [
+  force_x force_y
+  neighbor_cells
+]
+
 
 to Setup
   clear-all
   SetupCellInstructions            ; from Cell-Instructions.nls; creates initial stem cell
   FormatCells
-  ask cell 0 [ set heading 90 ]
+  set-default-shape cells "circle"
+  set-default-shape anchors "square"
+  ask cells [ set size 3 ]
   reset-ticks
 end
 
+to update-springs
+  if link-type = "spring-child"[
+    ;shouldn't need to do anything here
+  ]
+  if link-type = "spring-radius"[
+    clear-links
+    ask cells [
+      ask other cells in-radius spring-radius [
+        create-spring-with myself
+      ]
+    ]
+  ]
+  if link-type = "gravity"[
+    clear-links
+    ask cells [
+      let parent self
+      ask other cells in-radius spring-radius [
+        let child self
+        create-spring-with myself [ set affinity [distance parent] of child ]
+      ]
+    ]
+  ]
+  if link-type = "spring-left-right" [
+    clear-links
+    ask cells[
+      if count cells with [xcor < [xcor] of myself] != 0 [
+        create-spring-with max-one-of cells with [xcor < [xcor] of myself] [xcor]
+      ]
+      if count cells with [xcor > [xcor] of myself] != 0 [
+        create-spring-with min-one-of cells with [xcor > [xcor] of myself] [xcor]
+      ]
+    ]
+
+  ]
+end
+
+to apply-springs
+  ask cells [
+    set force_x 0
+    set force_y 0
+    if count anchors = 2[
+      ;set force_y out-side-force
+      set force_x sin heading * outside-force
+      set force_y cos heading * outside-force
+    ]
+  ]
+  ask links [
+    if true[
+      let spring-force 0
+
+      if-else link-length = 0
+      [
+        set spring-force spring-strength * explode-force
+        show "boom"
+      ]
+      [
+;        ifelse abs (link-length - resting-distance) < 2
+;        [set spring-force spring-strength * ln (link-length / resting-distance)]
+;        [set spring-force spring-strength * e ^ (link-length - resting-distance)]
+;        if spring-force > 10 [show spring-force]
+        set spring-force spring-strength * ln (link-length / resting-distance)
+        ;let displacement link-length - resting-distance
+        ;set spring-force spring-strength / (displacement * (1 - displacement))
+        ;set spring-force spring-strength * ln (abs(link-length - resting-distance) / resting-distance)
+        ;set spring-force  spring-strength * ((link-length - resting-distance) ^ 3 )
+        if link-type = "gravity" [set spring-force spring-force * gravity-pull / affinity]
+      ]
+      let force_vector (list 0 0)
+      ifelse link-length > 0
+      [set force_vector (list ((sin link-heading) * spring-force) ((cos link-heading) * spring-force))]
+      [set force_vector (list (spring-force) (spring-force))]
+
+      ask end1 [set force_x force_x + first force_vector]
+      ask end1 [set force_y force_y + first but-first force_vector]
+      ask end2 [set force_x force_x - first force_vector]
+      ask end2 [set force_y force_y - first but-first force_vector]
+    ]
+  ]
+  ask cells [
+    ask other cells in-radius 5 [
+      if distance myself != 0[
+        let xdiff abs ([xcor] of myself - [xcor] of self)
+        let ydiff abs ([ycor] of myself - [ycor] of self)
+        let xforce 0
+        let yforce 0
+        if xdiff != 0
+        [set xforce repulsion-strength / (((1 + xdiff) ^ 6) ^ (1 / 3))]
+        if ydiff != 0
+        [set yforce repulsion-strength / (((1 + ydiff) ^ 6) ^ (1 / 3))]
+        ifelse [xcor] of myself < [xcor] of self [
+          ask myself [set force_x force_x - xforce]
+        ][
+          ask myself [set force_x force_x + xforce]
+        ]
+        ifelse [ycor] of myself < [ycor] of self [
+          ask myself [set force_y force_y - yforce]
+        ][
+          ask myself [set force_y force_y + yforce]
+        ]
+      ]
+    ]
+  ]
+
+  ;  ask cells with [count my-links = 2] [
+  ;    let hding heading
+  ;    ask my-links [
+  ;      if link-heading > (180 + hding) or link-heading < hding[
+  ;        let goal 270 + hding
+  ;
+  ;      ]
+  ;      if link-heading < hding[
+  ;        let temp link-heading + 360
+  ;      ]
+  ;
+  ;
+  ;
+  ;      let lhead (link-heading - hding) mod 360
+  ;      if (lhead > 90  and lhead < 180) or (lhead > 270 and lhead < 360)[
+  ;        ask other-end [set force_x force_x - (sin hding) / 4]
+  ;        ask other-end [set force_y force_y - (cos hding) / 4]
+  ;      ]
+  ;      if (lhead > 180 and lhead < 270) or (lhead > 0 and lhead < 90)[
+  ;        ask other-end [set force_x force_x + (sin hding) / 4]
+  ;        ask other-end [set force_y force_y + (cos hding) / 4]
+  ;      ]
+  ;    ]
+  ;  ]
+
+;  ask cells with [count my-links = 2] [
+;    let goal (heading + 90) mod 180
+;    let headx sin heading * straightening
+;    let heady cos heading * straightening
+;    let lhead 0
+;    ask one-of my-links [
+;      set lhead link-heading
+;    ]
+;    ifelse lhead < 180 [
+;      ifelse lhead < goal [
+;        ;move forward
+;        set force_x force_x + headx
+;        set force_y force_y + heady
+;      ][
+;        set force_x force_x - headx
+;        set force_y force_y - heady
+;        ;move backward
+;      ]
+;    ][
+;      ifelse lhead > goal + 180 [
+;        ;move backward
+;        set force_x force_x - headx
+;        set force_y force_y - heady
+;      ][
+;        ;move forward
+;        set force_x force_x + headx
+;        set force_y force_y + heady
+;      ]
+;    ]
+;  ]
+
+  ask cells [
+    set xcor max (list (min-pxcor) (min list (xcor + (adjustment-rate * force_x)) (max-pxcor)  ))
+    set ycor max (list (min-pycor) (min list (ycor + (adjustment-rate * force_y)) (max-pycor) ))
+  ]
+end
+
+
 to Go
   ; call to cell-instructions to advance cell activity
-  GoCellInstructions             ; from Cell-Instructions.nls
+  if division[
+    GoCellInstructions             ; from Cell-Instructions.nls
+  ]
+  FormatCells
+  update-springs
+  ;repeat 3 [ layout-spring cells links .1 2 1 ]
+  repeat M [apply-springs]
 
   ; call to Draw function to display cells
-  Draw
-
+  CellDirect
+  CheckForAnchors
   tick
+end
+
+to CheckForAnchors
+  if count anchors < 2[
+    ask max-one-of cells [xcor] [
+      if xcor > 16 [
+        if count anchors = 0 or (count anchors = 1 and [xcor] of one-of anchors < -16) [
+          hatch-anchors 1 [
+            create-spring-with item 0 neighbor_cells
+            ask item 0 neighbor_cells [set neighbor_cells replace-item 1 neighbor_cells myself]
+          ]
+          die
+        ]
+      ]
+    ]
+    ask min-one-of cells [xcor] [
+      if xcor < -16 [
+        if count anchors = 0 or (count anchors = 1 and [xcor] of one-of anchors > 16) [
+          hatch-anchors 1 [
+            create-spring-with item 1 neighbor_cells
+            ask item 1 neighbor_cells [set neighbor_cells replace-item 0 neighbor_cells myself]
+          ]
+          die
+        ]
+      ]
+    ]
+  ]
+end
+
+to CellDirect
+  if orientation-type = "upward-restricted" [
+    ask cells [
+      if count my-links != 0 [
+        let avg 0
+        ask my-links [
+          let hding link-heading
+          if end2 = myself [set hding hding - 180]
+          set avg avg + hding
+        ]
+        set avg avg / count my-links
+        set heading avg - 90 * count my-links
+        if heading > 90 and heading < 270 [set heading heading + 180]
+      ]
+    ]
+  ]
+  if orientation-type = "minimal-rotation" [
+    ask cells [
+      if count my-links != 0 [
+        let avg 0
+        ask my-links [
+          let hding link-heading
+          if end2 = myself [set hding hding - 180]
+          set avg avg + hding
+        ]
+        set avg avg / count my-links
+        let goal avg - 90 * count my-links
+        ifelse subtract-headings goal heading < -90 or subtract-headings goal heading > 90
+        [set heading goal + 180]
+        [set heading goal]
+      ]
+    ]
+  ]
 end
 
 ;; ReDraw the cell structure
 to Draw
   if any? cells [
     ; call to position-cells which places all cells in appropriate position
-    CellPosition
+    position-2D-Cell-Positions
+
+    ; call to format-cell function which defines superficial shapes and color
+    FormatCells
 
     ; if the true coordinates exceed the size of the world, then hide the turtle and move it to an inconsequential
     ; position otherwise update the displayed position to match the true position
@@ -63,12 +316,9 @@ to Draw
         hide-turtle
         setxy max-pxcor max-pycor
       ][
-      setxy cxcor2D cycor2D
+        setxy cxcor2D cycor2D
       ]
     ]
-
-    ; call to format-cell function which defines superficial shapes and color
-    FormatCells
   ]
 end
 
@@ -103,13 +353,13 @@ to LargeWorld
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-256
+262
 10
-719
-474
+693
+523
 -1
 -1
-13.0
+3.0
 1
 10
 1
@@ -119,9 +369,9 @@ GRAPHICS-WINDOW
 0
 0
 1
--17
-17
--17
+-70
+70
+-150
 17
 0
 0
@@ -176,7 +426,7 @@ NIL
 NIL
 NIL
 NIL
-1
+0
 
 MONITOR
 733
@@ -198,7 +448,7 @@ lifespan
 lifespan
 0
 200
-25.0
+8.0
 1
 1
 NIL
@@ -266,7 +516,7 @@ MONITOR
 995
 62
 % Wholly Mature
-count cells with [cell_state = \"wholly-mature\"] / count cells with [cell_state != \"dead\"]
+count cells with [cell_state = \"wholly-mature\"] * 100 / count cells with [cell_state != \"dead\"]
 5
 1
 11
@@ -282,14 +532,14 @@ NIL
 0.0
 10.0
 0.0
-10.0
+3.0
 true
 false
 "" ""
 PENS
 "Immature" 1.0 0 -2674135 true "set-plot-x-range 0 max-pxcor" "histogram [ round distance cell 0 ] of cells with [cell_state = \"immature\"]"
-"Maturing" 1.0 0 -13345367 true "" "histogram [ round distance cell 0 ] of cells with [cell_state = \"maturing\"]"
-"Fully Mature" 1.0 0 -6459832 true "" "histogram [ round distance cell 0 ] of cells with [cell_state = \"fully-mature\"]"
+"Maturing" 1.0 0 -13345367 true "" "histogram [ round distance cell 0 ] of cells with [cell_state = \"mature\"]"
+"Fully Mature" 1.0 0 -6459832 true "" "histogram [ round distance cell 0 ] of cells with [cell_state = \"wholly-mature\"]"
 
 BUTTON
 159
@@ -306,7 +556,7 @@ NIL
 NIL
 NIL
 NIL
-1
+0
 
 SLIDER
 26
@@ -392,7 +642,7 @@ gen1-wm
 gen1-wm
 0
 12
-10.0
+7.0
 1
 1
 NIL
@@ -407,7 +657,7 @@ gen2-wm
 gen2-wm
 0
 12
-9.0
+8.0
 1
 1
 NIL
@@ -640,6 +890,202 @@ gen10-wm
 1
 NIL
 HORIZONTAL
+
+SLIDER
+733
+353
+905
+386
+spring-strength
+spring-strength
+0
+10
+4.2
+.2
+1
+NIL
+HORIZONTAL
+
+SLIDER
+732
+390
+904
+423
+resting-distance
+resting-distance
+0
+10
+1.4
+.2
+1
+NIL
+HORIZONTAL
+
+SLIDER
+733
+426
+905
+459
+adjustment-rate
+adjustment-rate
+0
+2
+0.1
+.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+733
+462
+905
+495
+explode-force
+explode-force
+0
+10
+2.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+911
+352
+944
+502
+M
+M
+0
+300
+173.0
+1
+1
+NIL
+VERTICAL
+
+SLIDER
+727
+497
+899
+530
+spring-radius
+spring-radius
+0
+10
+8.0
+1
+1
+NIL
+HORIZONTAL
+
+SWITCH
+906
+107
+1011
+140
+division
+division
+0
+1
+-1000
+
+SLIDER
+708
+173
+880
+206
+repulsion-strength
+repulsion-strength
+0
+3
+0.478
+.001
+1
+NIL
+HORIZONTAL
+
+CHOOSER
+432
+526
+584
+571
+link-type
+link-type
+"spring-left-right" "spring-child" "spring-radius" "gravity"
+1
+
+SLIDER
+755
+73
+927
+106
+gravity-pull
+gravity-pull
+0
+2
+0.75
+0.05
+1
+NIL
+HORIZONTAL
+
+SLIDER
+701
+129
+873
+162
+outside-force
+outside-force
+-.25
+0
+-0.232
+.001
+1
+NIL
+HORIZONTAL
+
+SLIDER
+574
+501
+746
+534
+divide-distance
+divide-distance
+0
+2
+0.6
+.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+258
+521
+430
+554
+straightening
+straightening
+0
+2
+0.0
+.01
+1
+NIL
+HORIZONTAL
+
+CHOOSER
+883
+153
+1045
+198
+orientation-type
+orientation-type
+"upward-restricted" "minimal-rotation"
+0
 
 @#$#@#$#@
 ## BACKGROUND

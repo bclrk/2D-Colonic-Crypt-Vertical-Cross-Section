@@ -15,6 +15,9 @@ to SetupCellInstructions
     set cell_state "immature"
     set is_stem? true
     set neighbor_cells n-values stem-mc [nobody]
+    set split_direction -1
+    set heading 0
+    set ycor 11
   ]
 end
 
@@ -27,6 +30,8 @@ to GoCellInstructions
 end
 
 ;; ---------------------------------------- Local Functions ---------------------------------------
+
+
 
 ;; Increments all age values and updates cell states when applicable
 to CellAge
@@ -52,54 +57,85 @@ end
 to CellDivide
   ask cells [
     ; increment the split direction by one step
-    set split_direction (split_direction + (stem-mc / cell_mc)) mod stem-mc
-    
+    ;set split_direction (split_direction + (stem-mc / cell_mc)) mod stem-mc
+    set split_direction split_direction * -1
+
     ; if the cell should divide, then initialize the reproduction
     if (cell_state = "mature") and (age > cell_mc or not rabbit?) [
-      let split-space item split_direction neighbor_cells    ; cell (or nobody) in the split_direction of the cell
-      
-      ; if direction of division was an old dead cell, revive the cell instead of creating a new one
-      ; this prevents empty "holes" where old cells exist while also maintaining connectivity of the tree
-      ifelse split-space != nobody and [cell_state = "dead"] of split-space [
-        ask split-space [
-          ; call to helper function which redefines all value changes to make the dead cell into a brand new cell
-          ; while maintaining all neighbor connections
-          set-new-cell-values
-        ]
-      ][
-        let parent-direction (split_direction + (int stem-mc / 2)) mod stem-mc    ; direction of the parent which is
-                                                                                  ; exactly opposite of the
-                                                                                  ; split_direction
-        let new-child nobody    ; handle for the new child about to be hatched
+;      let split-space item split_direction neighbor_cells    ; cell (or nobody) in the split_direction of the cell
+;      
+;      ; if direction of division was an old dead cell, revive the cell instead of creating a new one
+;      ; this prevents empty "holes" where old cells exist while also maintaining connectivity of the tree
+;        let parent-direction (split_direction + (int stem-mc / 2)) mod stem-mc    ; direction of the parent which is
+;                                                                                  ; exactly opposite of the
+;                                                                                  ; split_direction
+;        let new-child nobody    ; handle for the new child about to be hatched
         
         ; create brand new cell
         hatch 1 [
-          set new-child self
+          let new-child self
+          let parent myself
           ; call to helper function which redefines all value changes to make the dead cell into a brand new cell
           set-new-cell-values
-          
+          let split_angle 0
+          ifelse split_direction < 0[
+            if link-type = "spring-child"[
+              set neighbor_cells replace-item 1 neighbor_cells parent
+              let prev-nbor item 0 [neighbor_cells] of parent
+              if is-turtle? prev-nbor[
+                ask parent [ask my-links with [other-end = prev-nbor] [die]]
+                create-spring-with prev-nbor
+                set neighbor_cells replace-item 0 neighbor_cells prev-nbor
+                ask prev-nbor [set neighbor_cells replace-item 1 neighbor_cells new-child]
+              ]
+              ask parent [set neighbor_cells replace-item 0 neighbor_cells new-child]
+              create-spring-with parent
+            ]
+            set split_angle heading - 90
+          ][
+            if link-type = "spring-child"[
+              set neighbor_cells replace-item 0 neighbor_cells parent
+              let prev-nbor item 1 [neighbor_cells] of parent
+              if is-turtle? prev-nbor[
+                ask parent [ask my-links with [other-end = prev-nbor] [die]]
+                create-spring-with prev-nbor
+                set neighbor_cells replace-item 1 neighbor_cells prev-nbor
+                ask prev-nbor [set neighbor_cells replace-item 0 neighbor_cells new-child]
+              ]
+              ask parent [set neighbor_cells replace-item 1 neighbor_cells new-child]
+              create-spring-with parent
+            ]
+            set split_angle heading + 90
+          ]
+
+          let split_vector (list ((sin split_angle) * divide-distance) ((cos split_angle) * divide-distance))
+
+          set xcor max (list (min-pxcor) (min list ([xcor] of parent + first split_vector) (max-pxcor)))
+          set ycor max (list (min-pycor) (min list ([ycor] of parent + first but-first split_vector) (max-pycor)))
+
           ; new cell has no neighbors except for the parent, 
-          set neighbor_cells n-values stem-mc [nobody]
-          set neighbor_cells replace-item parent-direction neighbor_cells myself
+;          set neighbor_cells n-values stem-mc [nobody]
+;          set neighbor_cells replace-item parent-direction neighbor_cells myself
+      
+
         ]
         
-        let previous-child item split_direction neighbor_cells    ; cell that is currently occupying the location of
+;        let previous-child item split_direction neighbor_cells    ; cell that is currently occupying the location of
                                                                   ; the current split
         
         ; if the previous-child in that directly exists, push away push away old child
-        if previous-child != nobody [
-          ; set the parent-direction neighbor of the previous-child to be the new-child
-          ask previous-child [
-            set neighbor_cells replace-item parent-direction neighbor_cells new-child
-          ]
-          ; set the split_direction neighbor of the new-child to be the previous-child
-          ask new-child [
-            set neighbor_cells replace-item ([split_direction] of myself) neighbor_cells previous-child
-          ]
-        ]
-        ; set the split_direction neighbor of the parent to be the new-child
-        set neighbor_cells replace-item split_direction neighbor_cells new-child
-      ]
+;        if previous-child != nobody [
+;          ; set the parent-direction neighbor of the previous-child to be the new-child
+;          ask previous-child [
+;            set neighbor_cells replace-item parent-direction neighbor_cells new-child
+;          ]
+;          ; set the split_direction neighbor of the new-child to be the previous-child
+;          ask new-child [
+;            set neighbor_cells replace-item ([split_direction] of myself) neighbor_cells previous-child
+;          ]
+;        ]
+;        ; set the split_direction neighbor of the parent to be the new-child
+;        set neighbor_cells replace-item split_direction neighbor_cells new-child
     ]
   ]
 end
@@ -108,17 +144,30 @@ end
 ;; This is necessary to manage the number of agents and therefore optimize runtime
 to TrimDeadLeaves
   ; keep looping through until there are no more cells to trim
-  loop [
-    let kill-set cells with [
-      cell_state = "dead" and
-      length (filter [s -> s != nobody] neighbor_cells) <= 1
+;  loop [
+;    let kill-set cells with [
+;      cell_state = "dead"
+;      ;; and
+;      ;;length (filter [s -> s != nobody] neighbor_cells) <= 1
+;    ]
+;      
+;    ; if the kill-set is empty then subsequent iterations will also be empty, so stop to prevent infinite loop
+;    if not any? kill-set [ stop ]
+;    
+;    ; kill all the cells in the kill-set
+;    ask kill-set [ die ]
+;  ]
+  ask cells with [cell_state = "dead"] [
+    if link-type = "spring-child"[
+      let nbor0 item 0 neighbor_cells
+      let nbor1 item 1 neighbor_cells
+      if is-turtle? nbor0 and is-turtle? nbor1 [
+        ask nbor0 [create-spring-with nbor1]
+        ask nbor0 [set neighbor_cells replace-item 1 neighbor_cells nbor1]
+        ask nbor1 [set neighbor_cells replace-item 0 neighbor_cells nbor0]
+      ]
     ]
-      
-    ; if the kill-set is empty then subsequent iterations will also be empty, so stop to prevent infinite loop
-    if not any? kill-set [ stop ]
-    
-    ; kill all the cells in the kill-set
-    ask kill-set [ die ]
+    die
   ]
 end
 
@@ -131,6 +180,7 @@ to set-new-cell-values
   set generation ([generation] of myself + 1)
   set is_stem? false
   set split_direction [split_direction] of myself
+  set heading [heading] of myself
          
   ; new characteristic life-cycle values are the child-values of the parent cell
   let characteristic-parameters (get-characteristic-parameters generation)

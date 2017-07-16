@@ -1,56 +1,161 @@
-;;------------------------------------------------------------------------120---------------------------------------
 ;; This source file houses all functions associated with tracking the model-defined position of the cell
 
-;; ------------------------------------------------ Public Functions -----------------------------------------------
+;; ---------------------------------------- Public Functions ---------------------------------------
 
-;; Positions all cells in order of breadth-first search order beginning with
-;; the stem cell
-to CellPosition
+;; Positions all cells in order of breadth-first search order beginning with the stem cell
+to position-2D-Cell-Positions
+  ask cells [
+    ; reset visited? flag for upcoming traversal
+    set visited? false
+    ; set heading to face the nxt split-direction for visual purposes only
+    set heading (0 - 360 / stem-mc * (split_direction + (stem-mc / cell_mc))) + 90
+  ]
   
+  let cell-position-queue (list (list (min-one-of cells[generation]) 0 0))      ; queue which contains, in each element, a list of the following information:
+                                                        ;    - item 0: a cell to be positioned
+                                                        ;    - item 1: the new x coordinate of the cell
+                                                        ;    - item 2: the new y coordinate of the cell
+
+  ; Basic graph breadth first search loop
+  while [ not empty? cell-position-queue ] [
+    let node first cell-position-queue           ; extract the current element of queue
+    let current-cell first node                  ; extract the cell from the current queue element
+
+    ask current-cell [
+      ; update true (not displayed) coordinates for current cell
+      set cxcor2D item 1 node
+      set cycor2D item 2 node
+
+      ; flag the cell as visited so it will not be reached again
+      set visited? true
+    ]
+
+    ; Loop through all neighbors of the current cell to calculate new positions and add to queue
+    let i 0
+    while [ i < stem-mc ] [
+      let next-cell item i [neighbor_cells] of current-cell
+
+      ; Only add existing cells to queue that have not been visited
+      if next-cell != nobody and not [visited?] of next-cell [
+        ; calculate new positions relative to the current cell position. New positions are determined
+        ; by the "neighbor number", which is mapped to a particular angle it makes with the current cell.
+        let next-xcor item 1 node + cos (360 / stem-mc * i)
+        let next-ycor item 2 node + sin (360 / stem-mc * i)
+
+        ; create the new node element and add it to the queue
+        let next-node (list next-cell next-xcor next-ycor)
+        set cell-position-queue lput next-node cell-position-queue
+      ]
+      set i (i + 1)
+    ]
+    ; Remove the current cell from the queue
+    set cell-position-queue but-first cell-position-queue
+  ]
+end
+
+;; Repositions all the cells along the 3D crypt structure based on their current 2D location
+to position-3d-Cell-Positions
+  ; position all cells within crypt-arc along the bottom hemisphere of the crypt structure
+  ask cells with [sqrt(cxcor2D ^ 2 + cycor2D ^ 2) > 0 and sqrt(cxcor2D ^ 2 + cycor2D ^ 2) <= crypt_circumference / 4] [
+    map-to-hemisphere
+  ]
+
+  ; position all cells outside of the crypt-arc along the upper cylindrical part of the crypt structure
+  ask cells with [ sqrt(cxcor2D ^ 2 + cycor2D ^ 2) > crypt_circumference / 4 ] [
+    map-to-cylinder
+  ]
 end
 
 ;; ---------------------------------------- Local Functions ---------------------------------------
 
 ;; Maps the cell position onto the bottom hemispherical portion of the crypt
 to map-to-hemisphere
+  let crypt-radius (crypt_circumference / (2 * pi))      ; radius of the crypt
+  let branch-angle (360 / stem-mc) * branch_direction      ; Angle that the branch-direction makes with the x-axis
 
+  ; convert to polar coordinates in 2D plane
+  let r2D sqrt ((cxcor2D) ^ 2 + (cycor2D) ^ 2)
+  let theta2D (0 - (atan cxcor2D cycor2D)) + 90
+
+  ; find point A (projection of 2D coordinates onto branch axis)
+  let gamma2D theta2D - branch-angle   ; angle between 2D cell coordinate and branch axis
+  let a r2D * cos gamma2D              ; length of projection of coordinates onto branch axis
+  let b r2D * sin gamma2D              ; orthogonal distance between 2d cell coordinate and branch axis
+
+  ; calculate point A in spherical coordinates along the hemisphere
+  let A_theta branch-angle
+  let A_phi 180 - 90 * (a / (crypt_circumference / 4))
+  ; r is crypt radius
+
+  ; convert point A to cartesian coordinates
+  let Ax crypt-radius * (cos A_theta) * (sin A_phi)
+  let Ay crypt-radius * (sin A_theta) * (sin A_phi)
+  let Az crypt-radius * (cos A_phi)
+
+  ; find point C (point that defines a vector orthogonal to A on the xy plane)
+  let Cx 1
+  let Cy 1
+  let Cz 0
+
+  if (b != 0) [
+    set Cx crypt-radius * cos (branch-angle + 90 * (b / abs b))
+    set Cy crypt-radius * sin (branch-angle + 90 * (b / abs b))
+  ]
+
+  ; calculate vector k which defines the axis of rotation
+  let kx (Ay * Cz - Az * Cy)
+  let ky -1 * (Ax * Cz - Az * Cx)
+  let kz (Ax * Cy - Ay * Cx)
+
+  ; normalize vector k
+  let k_length sqrt (kx ^ 2 + ky ^ 2 + kz ^ 2)
+  set kx kx / k_length
+  set ky ky / k_length
+  set kz kz / k_length
+
+  ; calculate k cross A
+  let k_cross_A_x (ky * Az - kz * Ay)
+  let k_cross_A_y -1 * (kx * Az - kz * Ax)
+  let k_cross_A_z (kx * Ay - ky * Ax)
+
+  ; calculate k dot A
+  let k_dot_a (kx * Ax + ky * Ay + kz * Az)
+
+  ; calculate rotation (commonly denoted by theta in the Rodrigues rotation formula
+  let rotation 90 * (abs b / (crypt_circumference / 4))
+
+  ; use Rodrigues rotation to calculate point B (final projection of the cell onto the 3D crypt
+  let Bx Ax * (cos rotation) + k_cross_A_x * (sin rotation) + kx * k_dot_A * (1 - cos rotation)
+  let By Ay * (cos rotation) + k_cross_A_y * (sin rotation) + ky * k_dot_A * (1 - cos rotation)
+  let Bz Az * (cos rotation) + k_cross_A_z * (sin rotation) + kz * k_dot_A * (1 - cos rotation)
+
+  ; calculate final NetLogo coordinates
 end
 
 ;; Maps the cell position to the upper cylindrical part of the crypt
 to map-to-cylinder
+  let crypt-radius (crypt_circumference / (2 * pi))      ; radius of the crypt
+  let crypt-arc crypt_circumference / 4                  ; "crypt-arc" is defined as 1/4th of the crypt circumferance
 
-end
+  let branch-angle (360 / stem-mc) * branch_direction     ; Angle that the branch-direction makes with the x-axis
+  let x-base crypt-arc * cos branch-angle            ; 2D x-coordinate of the point where the branch axis should meet the base of the cylinder
+  let y-base crypt-arc * sin branch-angle            ; 2D y-coordinate of the point where the branch axis should meet the base of the cylinder
 
-; Calculate the average "Circumference" of the cell structure
-;   - This assumes the structure is "folded up" into a cylinder. So the Circumference is the average number of cells
-;      at each unit distance
-;   - circumerence is calculated at the "steady-state" section of the structure only
-to-report Circumference
-  ; determine the inner-radius to start counting Circumference at the last non-wholey mature cell
-  ; since no reproduction happens past this point, Circumference will not grow
-  let inner-radius [ distance cell 0 ] of max-one-of (cells with [ cell_state = "immature" or cell_state = "mature"]) [ distance cell 0 ]
-
-  ; determine the outer-radius to  be the outermost whole-mature cell
-  let outer-radius [ distance cell 0 ] of max-one-of (cells with [ cell_state = "wholly-mature"]) [ distance cell 0 ]
-
-  ; limit the outer-radius to max-pxcor
-  if outer-radius > max-pxcor [
-    set outer-radius max-pxcor
+  ; calculate polar coordinates of each point with origin at the point where the branch-axis meets the base of the cylinder
+  let r sqrt ((cxcor2D - x-base) ^ 2 + (cycor2D - y-base) ^ 2)
+  let theta 0
+  if (r > 0.001) [
+    set theta (0 - (atan (cxcor2D - x-base) (cycor2D - y-base))) + 90
   ]
 
-  ; reset the out-radius to half of the original distance from the inner-radius. This is to avoid the non-steady state
-  ; effects at the edges of branches when cells start dieing
-  set outer-radius round (inner-radius + 0.5 * (outer-radius - inner-radius))
+  let gamma theta - branch-angle      ; angle between the polar coordinate of the cell and the branch-axis
+  let a (r * cos gamma)               ; length of projection of cell coordinates onto the branch-axis
+  let b (r * sin gamma)               ; length of the orthogonal distance from the cell coordinates to the branch-axis
 
-  ; count all the cells lying in the desired range
-  let cells-in-range count cells with [ distance cell 0 > inner-radius and distance cell 0 < outer-radius and
-    not hidden?]
+  ; phi is the angle (in 3D) that the cell should make with the x axis
+  ; intuitively, as b gets larger, then the cell keeps "wrapping around" the crypt cylinder
+  let phi branch-angle + (b / crypt-radius) * (180 / pi)
 
-  ; if the outer-radius and inner-radius is the same, then report 0 to avoid division by zero
-  if outer-radius - inner-radius = 0 [
-    report 0
-  ]
-
-  ; otherwise report the average number of cells per unit radius
-  report (cells-in-range / (outer-radius - inner-radius))
+  ; calculate the final true 3D cartesian coordinates according to phi and the cylinder radius
 end
+
