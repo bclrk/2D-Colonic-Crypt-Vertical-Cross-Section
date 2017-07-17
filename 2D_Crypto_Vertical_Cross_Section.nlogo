@@ -52,7 +52,7 @@ to Setup
   FormatCells
   set-default-shape cells "circle"
   set-default-shape anchors "square"
-  ask cells [ set size 3 ]
+  ask cells [ set size 5 ]
   reset-ticks
 end
 
@@ -112,12 +112,18 @@ to apply-springs
         show "boom"
       ]
       [
-;        ifelse abs (link-length - resting-distance) < 2
-;        [set spring-force spring-strength * ln (link-length / resting-distance)]
-;        [set spring-force spring-strength * e ^ (link-length - resting-distance)]
+        ifelse (link-length - resting-distance) < max-distance
+        [set spring-force spring-strength * ln (link-length / resting-distance)]
+        [set spring-force spring-strength * (((link-length - max-distance) / increased-spring-scale) * ln (link-length / resting-distance) + ln (max-distance))]
 ;        if spring-force > 10 [show spring-force]
-        set spring-force spring-strength * ln (link-length / resting-distance)
-        ;let displacement link-length - resting-distance
+        ;set spring-force spring-strength * ln (link-length / resting-distance)
+        let displacement link-length - resting-distance
+;        ifelse displacement < 0 [
+;          set spring-force -1 * spring-strength * (-1 * displacement) ^ (2 / 3)
+;        ][
+;          set spring-force spring-strength * (displacement) ^ (2 / 3)
+;        ]
+        ;set spring-force spring-strength * (displacement ^ 3)
         ;set spring-force spring-strength / (displacement * (1 - displacement))
         ;set spring-force spring-strength * ln (abs(link-length - resting-distance) / resting-distance)
         ;set spring-force  spring-strength * ((link-length - resting-distance) ^ 3 )
@@ -216,8 +222,16 @@ to apply-springs
 ;  ]
 
   ask cells [
-    set xcor max (list (min-pxcor) (min list (xcor + (adjustment-rate * force_x)) (max-pxcor)  ))
-    set ycor max (list (min-pycor) (min list (ycor + (adjustment-rate * force_y)) (max-pycor) ))
+    let newx max (list (min-pxcor) (min list (xcor + (adjustment-rate * force_x)) (max-pxcor)  ))
+    let newy max (list (min-pycor) (min list (ycor + (adjustment-rate * force_y)) (max-pycor) ))
+    let toofar false
+;    foreach neighbor_cells[
+;      if distancexy newx newy > max-distance [set toofar true]
+;    ]
+    if not toofar[
+      set xcor newx
+      set ycor newy
+    ]
   ]
 end
 
@@ -373,8 +387,8 @@ GRAPHICS-WINDOW
 70
 -150
 17
-0
-0
+1
+1
 1
 ticks
 30.0
@@ -657,7 +671,7 @@ gen2-wm
 gen2-wm
 0
 12
-8.0
+7.0
 1
 1
 NIL
@@ -899,9 +913,9 @@ SLIDER
 spring-strength
 spring-strength
 0
-10
-4.2
-.2
+5
+3.2
+.1
 1
 NIL
 HORIZONTAL
@@ -915,7 +929,7 @@ resting-distance
 resting-distance
 0
 10
-1.4
+3.2
 .2
 1
 NIL
@@ -960,7 +974,7 @@ M
 M
 0
 300
-173.0
+213.0
 1
 1
 NIL
@@ -1086,6 +1100,36 @@ orientation-type
 orientation-type
 "upward-restricted" "minimal-rotation"
 0
+
+SLIDER
+957
+387
+1129
+420
+max-distance
+max-distance
+0
+3
+2.0
+.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+948
+434
+1146
+467
+increased-spring-scale
+increased-spring-scale
+0
+10
+1.2
+.1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## BACKGROUND
